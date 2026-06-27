@@ -1,0 +1,33 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+/target/
+/src-tauri/target/
+/src-tauri/gen/
+
+# Whisper / LLM model files — large binaries, don't commit
+/src-tauri/models/*.bin
+/src-tauri/binaries/*.dll
+/assets/model/*.gguf
+
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
