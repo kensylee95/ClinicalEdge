@@ -1,74 +1,49 @@
 // src-tauri/src/main.rs
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod payload;
-mod audio;      // ADDED
-mod whisper;    // ADDED
+mod audio;
+mod whisper;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 use sysinfo::{Pid, System};
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
+use whisper::WhisperState;
+use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 struct LlamaProcess(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
-#[cfg(target_arch = "x86_64")]
-fn pick_engine_tier() -> &'static str {
-    if is_x86_feature_detected!("avx2") {
-        "avx2"
-    } else if is_x86_feature_detected!("avx") {
-        "avx"
-    } else {
-        "noavx"
-    }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn pick_engine_tier() -> &'static str {
-    "avx2"
-}
-
-fn engine_filename() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "llama-server.exe"
-    } else {
-        "llama-server"
-    }
-}
-
-fn ensure_engine_installed(app: &tauri::App) -> Result<PathBuf, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?;
-
-    std::fs::create_dir_all(&data_dir).map_err(|e| format!("Cannot create data dir: {e}"))?;
-
+fn resource_root(app: &tauri::App) -> Result<PathBuf, String> {
     if cfg!(debug_assertions) {
         let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("assets/model");
-        println!("Dev mode: Using local assets at {:?}", dev_path);
+        println!("Dev mode: using local assets at {:?}", dev_path);
         return Ok(dev_path);
     }
 
-    let engine_dest = data_dir.join(engine_filename());
-    let model_dest = data_dir.join("my_clinical_model.gguf");
+    app.path()
+        .resource_dir()
+        .map_err(|e| format!("Cannot resolve resource dir: {e}"))
+}
 
-    if engine_dest.exists() && model_dest.exists() {
-        return Ok(data_dir);
+fn llm_model_path(resource_root: &PathBuf) -> PathBuf {
+    if cfg!(debug_assertions) {
+        resource_root.join("my_clinical_model.gguf")
+    } else {
+        resource_root.join("models").join("my_clinical_model.gguf")
     }
+}
 
-    let exe_path = std::env::current_exe().map_err(|e| format!("Cannot resolve current exe: {e}"))?;
-
-    let footer = payload::Footer::read_from(&exe_path)
-        .map_err(|e| format!("Cannot read embedded payload footer: {e}"))?
-        .ok_or_else(|| {
-            "This build has no embedded engine/model payload. Run scripts/pack.sh for production.".to_string()
-        })?;
-
-    Ok(data_dir)
+fn whisper_model_path(resource_root: &PathBuf) -> PathBuf {
+    if cfg!(debug_assertions) {
+         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("models")
+            .join("ggml-tiny.en.bin")
+    } else {
+        resource_root.join("models").join("ggml-tiny.en.bin")
+    }
 }
 
 #[tauri::command]
@@ -87,11 +62,6 @@ fn get_memory_info() -> serde_json::Value {
     serde_json::json!({ "app": app_ram_mb, "sys": sys_used_gb })
 }
 
-#[tauri::command]
-fn get_cpu_tier() -> &'static str {
-    pick_engine_tier()
-}
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -99,20 +69,44 @@ fn main() {
         .manage(LlamaProcess(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             get_memory_info,
-            get_cpu_tier,
-            audio::decode_audio,        // ADDED
-            whisper::transcribe_audio,  // ADDED
+            audio::decode_audio,
+            whisper::transcribe_audio,
         ])
         .setup(|app| {
-            let data_dir = ensure_engine_installed(app).unwrap_or_else(|e| {
+            let root = resource_root(app).unwrap_or_else(|e| {
                 eprintln!("Setup error: {e}");
                 std::process::exit(1);
             });
+            eprintln!("Resource root: {:?}", root);
 
-            let model_path = data_dir.join("my_clinical_model.gguf");
-            eprintln!("Model path: {:?}", model_path);
-            eprintln!("Model exists: {}", model_path.exists());
+            // ── LLM model check ──────────────────────────────────────────
+            let model_path = llm_model_path(&root);
+            eprintln!("LLM model path: {:?}", model_path);
+            eprintln!("LLM model exists: {}", model_path.exists());
 
+            if !model_path.exists() {
+                eprintln!(
+                    "Setup error: LLM model not found at {:?}. Check tauri.conf.json's \
+                     bundle.resources mapping for my_clinical_model.gguf, and confirm \
+                     assets/model/my_clinical_model.gguf exists before building.",
+                    model_path
+                );
+                std::process::exit(1);
+            }
+
+            // ── Whisper model — load once, keep in memory ─────────────────
+            let whisper_path = whisper_model_path(&root);
+            eprintln!("Whisper model path: {:?}", whisper_path);
+            eprintln!("Whisper model exists: {}", whisper_path.exists());
+
+            let whisper_ctx = WhisperContext::new_with_params(
+                whisper_path.to_str().unwrap(),
+                WhisperContextParameters::default(),
+            ).expect("failed to load whisper model");
+
+            app.manage(WhisperState(Mutex::new(whisper_ctx)));
+
+            // ── llama-server sidecar ──────────────────────────────────────
             let (mut rx, child) = app
                 .shell()
                 .sidecar("llama-server")
@@ -121,9 +115,10 @@ fn main() {
                     "-m", model_path.to_str().unwrap(),
                     "--port", "9191",
                     "--host", "127.0.0.1",
-                    "-c", "2048",
+                    "-c", "1024",
                     "-t", "4",
                     "--n-gpu-layers", "0",
+                    "--flash-attn",
                 ])
                 .spawn()
                 .map_err(|e| { eprintln!("Sidecar spawn error: {e:?}"); format!("{e}") })?;

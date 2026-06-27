@@ -38,10 +38,16 @@
       "binaries/ggml-cpu-x64.dll": ".",
       "binaries/ggml-base.dll": ".",
       "binaries/llama.dll": ".",
-      "models/ggml-tiny.en.bin": "models/ggml-tiny.en.bin"
+      "models/ggml-tiny.en.bin": "models/ggml-tiny.en.bin",
+      "../assets/model/my_clinical_model.gguf": "models/my_clinical_model.gguf"
     },
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "compression": "none"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
