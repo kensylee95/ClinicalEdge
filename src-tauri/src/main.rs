@@ -118,7 +118,7 @@ fn main() {
                     "-c", "1024",
                     "-t", "4",
                     "--n-gpu-layers", "0",
-                    "--flash-attn",
+                    "--flash-attn", "off"
                 ])
                 .spawn()
                 .map_err(|e| { eprintln!("Sidecar spawn error: {e:?}"); format!("{e}") })?;

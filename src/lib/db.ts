@@ -1,59 +1,122 @@
 import Database from "@tauri-apps/plugin-sql";
-import type { TriageRecord } from "./llama";
+import { inferFields, parseUserJson, type FlatField } from "./inferSchema";
 
-export interface LedgerRow {
-  id: number;
-  patient_name: string;
-  age: number;
-  primary_symptom: string;
-  duration_days: number;
-  triage_priority: "EMERGENCY" | "URGENT" | "ROUTINE";
-  action_items: string;
-  timestamp: string;
-}
+// ── Active schema state ───────────────────────────────────────────
+// Set once when the user applies their JSON schema.
+// All subsequent insertions and reads use this.
 
 let _db: Database | null = null;
+let _tableName: string | null = null;
+let _fields: FlatField[] | null = null;
 
 async function getDb(): Promise<Database> {
   if (_db) return _db;
-  _db = await Database.load("sqlite:clinical_records.db");
-  await _db.execute(`
-    CREATE TABLE IF NOT EXISTS triage_ledger (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      patient_name     TEXT NOT NULL,
-      age              INTEGER NOT NULL,
-      primary_symptom  TEXT NOT NULL,
-      duration_days    INTEGER NOT NULL,
-      triage_priority  TEXT NOT NULL,
-      action_items     TEXT NOT NULL,
-      timestamp        DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  _db = await Database.load("sqlite:records.db");
   return _db;
 }
 
-export async function insertRecord(parsed: TriageRecord): Promise<void> {
+// ── Schema initialisation ─────────────────────────────────────────
+
+/**
+ * Call this when the user applies a JSON schema.
+ * Derives the flat fields, creates the SQLite table if it doesn't exist,
+ * and stores the field list for insertRecord / getRecords.
+ *
+ * Table name is derived from a slugified version of the JSON keys
+ * (stable across reloads for the same schema shape).
+ */
+export async function initSchema(rawJson: string): Promise<void> {
+  const obj = parseUserJson(rawJson);
+  const fields = inferFields(obj);
+
+  // Stable table name: hash of sorted field keys
+  const keyHash = fields
+    .map(f => f.key)
+    .sort()
+    .join("_")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 48);
+  const tableName = `rec_${keyHash}`;
+
   const db = await getDb();
+
+  const columnDefs = fields
+    .map(f => `  ${f.key} ${f.sqlType}`)
+    .join(",\n");
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS ${tableName} (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+${columnDefs}
+    )
+  `);
+
+  _tableName = tableName;
+  _fields    = fields;
+}
+
+// ── Insert ────────────────────────────────────────────────────────
+
+/**
+ * Insert a record. `parsed` is the flat JSON object the model produced
+ * (already matching the user's schema). Nested arrays are JSON-stringified.
+ */
+export async function insertRecord(
+  parsed: Record<string, unknown>
+): Promise<void> {
+  if (!_tableName || !_fields) {
+    throw new Error("Schema not initialised — call initSchema() first.");
+  }
+
+  const db = await getDb();
+  const cols = _fields.map(f => f.key).join(", ");
+  const placeholders = _fields.map(() => "?").join(", ");
+
+  const values = _fields.map(f => {
+    const val = parsed[f.key] ?? null;
+    // Arrays and any remaining objects → JSON string
+    if (Array.isArray(val) || (typeof val === "object" && val !== null)) {
+      return JSON.stringify(val);
+    }
+    // Booleans → 0/1 for SQLite
+    if (typeof val === "boolean") return val ? 1 : 0;
+    return val;
+  });
+
   await db.execute(
-    `INSERT INTO triage_ledger
-       (patient_name, age, primary_symptom, duration_days, triage_priority, action_items)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      String(parsed.patient_name ?? "Unknown"),
-      Number(parsed.age ?? 0),
-      String(parsed.primary_symptom ?? "Unspecified"),
-      Number(parsed.duration_days ?? 0),
-      String(parsed.triage_priority ?? "ROUTINE"),
-      JSON.stringify(parsed.clinical_action_items ?? []),
-    ]
+    `INSERT INTO ${_tableName} (${cols}) VALUES (${placeholders})`,
+    values
   );
 }
 
+// ── Read ──────────────────────────────────────────────────────────
+
+export interface LedgerRow {
+  id: number;
+  timestamp: string;
+  [key: string]: unknown;
+}
+
 export async function getRecords(): Promise<LedgerRow[]> {
+  if (!_tableName) {
+    throw new Error("Schema not initialised — call initSchema() first.");
+  }
   const db = await getDb();
   return await db.select<LedgerRow[]>(
-    `SELECT id, patient_name, age, primary_symptom, duration_days,
-            triage_priority, action_items, timestamp
-     FROM triage_ledger ORDER BY id DESC`
+    `SELECT * FROM ${_tableName} ORDER BY id DESC`
   );
+}
+
+// ── Accessors ─────────────────────────────────────────────────────
+
+export function getFields(): FlatField[] {
+  if (!_fields) throw new Error("Schema not initialised.");
+  return _fields;
+}
+
+export function getTableName(): string {
+  if (!_tableName) throw new Error("Schema not initialised.");
+  return _tableName;
 }

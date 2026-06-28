@@ -1,0 +1,242 @@
+name: Build ClinicalEdge installers
+
+# Builds a Windows MSI and a Linux .deb/.AppImage in parallel, native on
+# each OS (Tauri + whisper-rs-sys's CMake-built C++ deps can't be
+# cross-compiled reliably, so each platform gets its own runner).
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+env:
+  # Pin a llama.cpp release tag here once you've tested against it, e.g. "b9821".
+  # Leave as "latest" to always pull the newest release at build time --
+  # convenient, but means a llama.cpp release can change your build's
+  # behavior without you changing anything in this repo.
+  LLAMACPP_RELEASE_TAG: "latest"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve llama.cpp release tag
+        id: llamacpp
+        shell: bash
+        run: |
+          if [ "$LLAMACPP_RELEASE_TAG" = "latest" ]; then
+            tag=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
+              | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+          else
+            tag="$LLAMACPP_RELEASE_TAG"
+          fi
+          echo "Resolved llama.cpp tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download llama.cpp Windows CPU engine
+        shell: bash
+        run: |
+          tag="${{ steps.llamacpp.outputs.tag }}"
+          url="https://github.com/ggml-org/llama.cpp/releases/download/${tag}/llama-${tag}-bin-win-cpu-x64.zip"
+          echo "Downloading $url"
+          curl -fsSL "$url" -o engine-windows.zip
+          mkdir -p engine-windows
+          unzip -q engine-windows.zip -d engine-windows
+          echo "Engine dir contents:"
+          ls -la engine-windows
+
+      - name: Stage Windows engine files into binaries/
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          # llama-server.exe must be suffixed with the target triple for
+          # Tauri's externalBin sidecar resolution.
+          cp engine-windows/llama-server.exe \
+            "src-tauri/binaries/llama-server-x86_64-pc-windows-msvc.exe"
+          # Every sibling DLL llama-server.exe needs at runtime, copied flat.
+          cp engine-windows/*.dll src-tauri/binaries/
+          echo "Staged binaries/:"
+          ls -la src-tauri/binaries
+
+      - name: Download model files
+        shell: bash
+        env:
+          # TODO: set these once hosting is decided (GitHub Releases asset
+          # URL, Hugging Face Hub URL, R2/S3 presigned URL, etc.)
+          LLM_MODEL_URL: ${{ secrets.LLM_MODEL_URL }}
+          WHISPER_MODEL_URL: ${{ secrets.WHISPER_MODEL_URL }}
+        run: |
+          mkdir -p assets/model src-tauri/models
+          if [ -z "$LLM_MODEL_URL" ]; then
+            echo "::error::LLM_MODEL_URL secret is not set. See workflow TODO."
+            exit 1
+          fi
+          echo "Downloading LLM model..."
+          curl -fsSL "$LLM_MODEL_URL" -o assets/model/my_clinical_model.gguf
+
+          if [ -z "$WHISPER_MODEL_URL" ]; then
+            echo "::error::WHISPER_MODEL_URL secret is not set. See workflow TODO."
+            exit 1
+          fi
+          echo "Downloading whisper model..."
+          curl -fsSL "$WHISPER_MODEL_URL" -o src-tauri/models/ggml-tiny.en.bin
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Windows installer
+        run: cargo tauri build
+        working-directory: src-tauri
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClinicalEdge-windows-installer
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Tauri Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl wget file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            cmake \
+            clang
+
+      - name: Resolve llama.cpp release tag
+        id: llamacpp
+        run: |
+          if [ "$LLAMACPP_RELEASE_TAG" = "latest" ]; then
+            tag=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
+              | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+          else
+            tag="$LLAMACPP_RELEASE_TAG"
+          fi
+          echo "Resolved llama.cpp tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download llama.cpp Linux CPU engine
+        run: |
+          tag="${{ steps.llamacpp.outputs.tag }}"
+          url="https://github.com/ggml-org/llama.cpp/releases/download/${tag}/llama-${tag}-bin-ubuntu-x64.zip"
+          echo "Downloading $url"
+          curl -fsSL "$url" -o engine-linux.zip
+          mkdir -p engine-linux
+          unzip -q engine-linux.zip -d engine-linux
+          echo "Engine dir contents:"
+          ls -la engine-linux
+
+      - name: Verify llama-server resolves its shared libraries
+        run: |
+          # llama.cpp's ubuntu-x64 release asset has, in the past, shipped
+          # missing a required .so (see ggml-org/llama.cpp#11893) -- fail
+          # loudly here instead of producing an installer that crashes on
+          # the end user's machine.
+          chmod +x engine-linux/llama-server
+          if ! ldd engine-linux/llama-server | grep -q "not found"; then
+            echo "All shared library dependencies resolved."
+          else
+            echo "::error::llama-server is missing shared libraries:"
+            ldd engine-linux/llama-server | grep "not found"
+            exit 1
+          fi
+
+      - name: Stage Linux engine files into binaries/
+        run: |
+          mkdir -p src-tauri/binaries
+          cp engine-linux/llama-server \
+            "src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu"
+          chmod +x "src-tauri/binaries/llama-server-x86_64-unknown-linux-gnu"
+          # Every sibling .so llama-server needs at runtime, copied flat.
+          cp engine-linux/*.so src-tauri/binaries/ 2>/dev/null || \
+            echo "No top-level .so files in this release asset -- check engine-linux/ layout above."
+          echo "Staged binaries/:"
+          ls -la src-tauri/binaries
+
+      - name: Download model files
+        env:
+          LLM_MODEL_URL: ${{ secrets.LLM_MODEL_URL }}
+          WHISPER_MODEL_URL: ${{ secrets.WHISPER_MODEL_URL }}
+        run: |
+          mkdir -p assets/model src-tauri/models
+          if [ -z "$LLM_MODEL_URL" ]; then
+            echo "::error::LLM_MODEL_URL secret is not set. See workflow TODO."
+            exit 1
+          fi
+          echo "Downloading LLM model..."
+          curl -fsSL "$LLM_MODEL_URL" -o assets/model/my_clinical_model.gguf
+
+          if [ -z "$WHISPER_MODEL_URL" ]; then
+            echo "::error::WHISPER_MODEL_URL secret is not set. See workflow TODO."
+            exit 1
+          fi
+          echo "Downloading whisper model..."
+          curl -fsSL "$WHISPER_MODEL_URL" -o src-tauri/models/ggml-tiny.en.bin
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Build Linux installers
+        run: cargo tauri build
+        working-directory: src-tauri
+
+      - name: Upload Linux installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClinicalEdge-linux-installers
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

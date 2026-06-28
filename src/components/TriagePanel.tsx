@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
 import { runInference } from "../lib/llama";
-import { insertRecord } from "../lib/db";
+import { initSchema, insertRecord } from "../lib/db";
 
 interface Props {
   transcript: string;
   serverOnline: boolean;
+  rawJson: string | null;   // ← replaces SchemaConfig
   onTpsUpdate: (tps: number) => void;
 }
 
 type Status = "idle" | "loading" | "success" | "error";
 
-export default function TriagePanel({ transcript, serverOnline, onTpsUpdate }: Props) {
+export default function TriagePanel({ transcript, serverOnline, rawJson, onTpsUpdate }: Props) {
   const [text, setText] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
@@ -20,12 +21,15 @@ export default function TriagePanel({ transcript, serverOnline, onTpsUpdate }: P
   }, [transcript]);
 
   async function handleSubmit() {
-    if (!text.trim() || !serverOnline) return;
+    if (!text.trim() || !serverOnline || !rawJson) return;
     setStatus("loading");
     setError("");
     try {
-      const { data, tps } = await runInference(text);
-      if (!data) throw new Error("Schema verification failed — token sequence deviated from GBNF rules.");
+      // initSchema is idempotent (CREATE TABLE IF NOT EXISTS) — safe to call
+      // on every submit; only does real work the first time per schema shape.
+      await initSchema(rawJson);
+      const { data, tps } = await runInference(text, rawJson);
+      if (!data) return;
       await insertRecord(data);
       if (tps != null) onTpsUpdate(tps);
       setStatus("success");
@@ -37,7 +41,8 @@ export default function TriagePanel({ transcript, serverOnline, onTpsUpdate }: P
     }
   }
 
-  const canSubmit = serverOnline && text.trim().length > 0 && status !== "loading";
+  const hasSchema = !!rawJson;
+  const canSubmit = serverOnline && hasSchema && text.trim().length > 0 && status !== "loading";
 
   return (
     <div className="card">
@@ -57,7 +62,7 @@ export default function TriagePanel({ transcript, serverOnline, onTpsUpdate }: P
         {status === "loading" && (
           <div>
             <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-              Running constrained inference via GBNF…
+              Running constrained inference via grammar…
             </div>
             <div className="progress-wrap">
               <div className="progress-fill" style={{ width: "100%" }} />
@@ -71,11 +76,16 @@ export default function TriagePanel({ transcript, serverOnline, onTpsUpdate }: P
           </div>
         )}
         <button className="btn btn-primary btn-full" onClick={handleSubmit} disabled={!canSubmit}>
-          {status === "loading" ? "Processing…" : "Submit to Triage Ledger"}
+          {status === "loading" ? "Processing…" : "Get structured data"}
         </button>
         {!serverOnline && (
           <p style={{ fontSize: "11px", color: "var(--text-muted)", textAlign: "center" }}>
             llama-server offline — start the sidecar first.
+          </p>
+        )}
+        {serverOnline && !hasSchema && (
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", textAlign: "center" }}>
+            No schema defined — open <strong>⚙ Schema</strong> above and paste a JSON structure.
           </p>
         )}
       </div>
