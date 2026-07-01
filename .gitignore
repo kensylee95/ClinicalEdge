@@ -16,8 +16,8 @@ dist-ssr
 /src-tauri/gen/
 
 # Whisper / LLM model files — large binaries, don't commit
-/src-tauri/models/
-/src-tauri/binaries/
+src-tauri/models/*
+/src-tauri/binaries/*
 /assets/model/*.gguf
 
 
