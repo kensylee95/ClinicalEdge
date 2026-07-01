@@ -1,4 +1,4 @@
-name: Build ClinicalEdge installers
+name: Build Structra installers
 
 # Builds a Windows MSI and a Linux .deb/.AppImage in parallel, native on
 # each OS (Tauri + whisper-rs-sys's CMake-built C++ deps can't be
@@ -112,7 +112,7 @@ jobs:
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClinicalEdge-windows-installer
+          name: Structra-windows-installer
           path: |
             src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
@@ -235,7 +235,7 @@ jobs:
       - name: Upload Linux installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ClinicalEdge-linux-installers
+          name: Structra-linux-installers
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage

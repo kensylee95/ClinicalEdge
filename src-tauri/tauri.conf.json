@@ -1,7 +1,7 @@
 {
-  "productName": "ClinicalEdge",
+  "productName": "Structra",
   "version": "1.0.0",
-  "identifier": "com.clinicaledge.app",
+  "identifier": "com.Structra.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "ClinicalEdge — Sovereign Medical Intake Node",
+        "title": "Structra — Unstructured input. Structured records. Zero cloud.",
         "width": 1280,
         "height": 820,
         "minWidth": 800,
@@ -39,7 +39,11 @@
       "binaries/ggml-base.dll": ".",
       "binaries/llama.dll": ".",
       "models/ggml-tiny.en.bin": "models/ggml-tiny.en.bin",
-      "../assets/model/my_clinical_model.gguf": "models/my_clinical_model.gguf"
+      "../assets/model/my_clinical_model.gguf": "models/my_clinical_model.gguf",
+      "models/onnx/encoder_model_quantized.onnx": "models/onnx/encoder_model_quantized.onnx",
+      "models/onnx/decoder_model_quantized.onnx": "models/onnx/decoder_model_quantized.onnx",
+      "models/tokenizer.json": "models/tokenizer.json",
+      "models/onnx/onnxtr_db_mobilenet_v3_large.onnx": "models/onnx/onnxtr_db_mobilenet_v3_large.onnx"
     },
     "active": true,
     "targets": ["nsis"],

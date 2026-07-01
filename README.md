@@ -1,6 +1,6 @@
-# ClinicalEdge — Sovereign Medical Intake Node
+# Structra — Unstructured input. Structured records. Zero cloud.
 
-ClinicalEdge is a desktop app for offline medical intake. It records and transcribes a conversation, then uses a locally-running AI model to help structure that conversation into useful data — all without sending anything over the internet. Audio, transcripts, and patient information never leave the device it runs on.
+Structra is a desktop app for offline medical intake. It records and transcribes a conversation, then uses a locally-running AI model to help structure that conversation into useful data — all without sending anything over the internet. Audio, transcripts, and patient information never leave the device it runs on.
 
 It's built with [Tauri](https://tauri.app), which means the interface is a normal web app (React) but the heavy lifting — audio processing, AI inference, the database — runs as native Rust code on the user's machine.
 
@@ -39,7 +39,7 @@ The React frontend never talks to the internet for any of this — it calls into
 
 ### Why a local AI model instead of an API?
 
-Calling an AI service over the internet (like the ones behind ChatGPT or similar tools) is simpler to build, but it means sending the conversation's content to someone else's server. ClinicalEdge instead bundles a small, efficient model that runs directly on the user's computer. It's not as capable as the largest cloud models, but it never has to leave the building.
+Calling an AI service over the internet (like the ones behind ChatGPT or similar tools) is simpler to build, but it means sending the conversation's content to someone else's server. Structra instead bundles a small, efficient model that runs directly on the user's computer. It's not as capable as the largest cloud models, but it never has to leave the building.
 
 ## Project layout
 
@@ -120,3 +120,5 @@ Recordings are captured by the browser's built-in recording API, which produces 
 **A build fails with "not enough space on disk":** Rust build artifacts (especially with the speech and AI libraries here) can use a surprising amount of disk space across repeated builds. Running `cargo clean` inside `src-tauri/` will remove old build output and free up space.
 
 **Transcription fails after recording:** open the app's developer tools (right-click → Inspect, or press F12) and check the Console tab for the actual error — the status message shown in the app itself is intentionally brief.
+my-clical-model (Llama-3.2-3B-Instruct-Q4_K_M.gguf)
+taskkill /F /IM llama-server.exe

@@ -33,8 +33,8 @@ export default function App() {
         <div className="header-left">
           <span className="logo-mark">CE</span>
           <div>
-            <h1>ClinicalEdge</h1>
-            <p className="header-sub">Sovereign Medical Intake Node</p>
+            <h1>Structra</h1>
+            <p className="header-sub">— Unstructured input. Structured records. Zero cloud.</p>
           </div>
         </div>
 

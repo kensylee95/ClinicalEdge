@@ -1,13 +1,18 @@
 // src-tauri/src/audio.rs
+use once_cell::sync::Lazy;
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 use symphonia::core::{
-    audio::SampleBuffer, codecs::{CodecRegistry, DecoderOptions},
-    formats::FormatOptions, io::MediaSourceStream,
-    meta::MetadataOptions, probe::Hint,
+    audio::SampleBuffer,
+    codecs::{CodecRegistry, DecoderOptions},
+    formats::FormatOptions,
+    io::MediaSourceStream,
+    meta::MetadataOptions,
+    probe::Hint,
 };
 use symphonia::default::register_enabled_codecs;
 use symphonia_adapter_libopus::OpusDecoder;
-use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
-use once_cell::sync::Lazy;
 
 /// Custom codec registry: Symphonia's built-in defaults (FLAC, Vorbis, PCM, etc.)
 /// plus Opus via libopus, since Symphonia has no native Opus decoder.
@@ -25,12 +30,20 @@ pub fn decode_to_16k_mono(bytes: Vec<u8>) -> Result<Vec<f32>, String> {
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
     let probed = symphonia::default::get_probe()
-        .format(&Hint::new(), mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &Hint::new(),
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| e.to_string())?;
 
     let mut format = probed.format;
     let track = format.default_track().ok_or("No audio track")?;
-    let native_sr = track.codec_params.sample_rate.ok_or("Unknown sample rate")? as f64;
+    let native_sr = track
+        .codec_params
+        .sample_rate
+        .ok_or("Unknown sample rate")? as f64;
     let mut decoder = CODECS
         .make(&track.codec_params, &DecoderOptions::default())
         .map_err(|e| e.to_string())?;
@@ -43,7 +56,9 @@ pub fn decode_to_16k_mono(bytes: Vec<u8>) -> Result<Vec<f32>, String> {
             Ok(p) => p,
             Err(_) => break,
         };
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id() != track_id {
+            continue;
+        }
 
         let decoded = decoder.decode(&packet).map_err(|e| e.to_string())?;
         let spec = *decoded.spec();
@@ -68,13 +83,8 @@ pub fn decode_to_16k_mono(bytes: Vec<u8>) -> Result<Vec<f32>, String> {
         oversampling_factor: 256,
         window: WindowFunction::BlackmanHarris2,
     };
-    let mut resampler = SincFixedIn::<f32>::new(
-        16000.0 / native_sr,
-        2.0,
-        params,
-        samples.len(),
-        1,
-    ).map_err(|e| e.to_string())?;
+    let mut resampler = SincFixedIn::<f32>::new(16000.0 / native_sr, 2.0, params, samples.len(), 1)
+        .map_err(|e| e.to_string())?;
 
     let out = resampler
         .process(&[&samples], None)

@@ -47,7 +47,7 @@ export default function TriagePanel({ transcript, serverOnline, rawJson, onTpsUp
   return (
     <div className="card">
       <div className="card-header">
-        <span className="card-title">📋 Clinical Transcript</span>
+        <span className="card-title">Transcript</span>
         {status === "success" && (
           <span style={{ fontSize: "11px", color: "var(--accent)" }}>✓ Committed to ledger</span>
         )}

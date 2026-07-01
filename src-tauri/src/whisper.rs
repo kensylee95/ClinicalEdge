@@ -1,8 +1,8 @@
 // src-tauri/src/whisper.rs
-use std::sync::Mutex;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
-use tauri::{AppHandle, Manager};
 use crate::audio::decode_to_16k_mono;
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext };
 
 pub struct WhisperState(pub Mutex<WhisperContext>);
 
